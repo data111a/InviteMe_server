@@ -24,6 +24,10 @@ export interface OriginPattern {
 }
 
 export function makeOriginMatcher(patterns: readonly string[]): (origin: string) => boolean {
+  // A bare "*" means allow ANY origin. Intended for local testing only: on the
+  // credentialed dashboard side it lets any website call the API with the cookie.
+  if (patterns.some((p) => p.trim() === '*')) return () => true;
+
   const exact = new Set<string>();
   const wildcards: OriginPattern[] = [];
 

@@ -222,6 +222,9 @@ async function start(): Promise<void> {
     console.log(`    data:      MongoDB ${mongoTarget()}`);
     console.log(`    dashboard: ${env.DASHBOARD_ORIGIN}`);
     console.log(`    intake ok: ${env.intakeAllowedOrigins.join(', ') || '(none set)'}`);
+    if (env.DASHBOARD_ORIGIN === '*' || env.intakeAllowedOrigins.includes('*')) {
+      console.log(`    WARNING:   CORS is OPEN to all origins (testing only - lock down before production)`);
+    }
     if (clientDist && existsSync(clientDist)) {
       console.log(`    serving:   ${clientDist} (single-origin mode)`);
     }

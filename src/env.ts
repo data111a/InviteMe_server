@@ -17,6 +17,10 @@ const origin = z
     'must look like http://localhost:5173 or https://example.com (no trailing slash, no path)',
   );
 
+/** An origin (or wildcard subdomain), OR a bare "*" that allows ALL origins.
+ *  Use "*" for local testing only — never in production. */
+const originOrStar = z.union([z.literal('*'), origin]);
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().max(65535).default(4000),
@@ -24,7 +28,7 @@ const EnvSchema = z.object({
   JWT_SECRET: z.string().min(32, 'must be at least 32 characters - see .env.example for how to generate one'),
   JWT_EXPIRES_IN: z.string().trim().min(1).default('7d'),
 
-  DASHBOARD_ORIGIN: origin,
+  DASHBOARD_ORIGIN: originOrStar,
   // One comma-separated string in .env -> a clean, validated list of origins.
   // Each entry is checked with the same `origin` rule as DASHBOARD_ORIGIN, so a
   // trailing slash or stray path is rejected at startup with a readable message -
@@ -38,7 +42,7 @@ const EnvSchema = z.object({
         .map((s) => s.trim())
         .filter(Boolean),
     )
-    .pipe(z.array(origin)),
+    .pipe(z.array(originOrStar)),
 
   ADMIN_USERNAME: z.string().trim().min(3, 'must be at least 3 characters'),
   ADMIN_PASSWORD: z.string().min(10, 'must be at least 10 characters'),
