@@ -1,0 +1,3 @@
+# Never commit real guest data. Ignore everything in this folder except this file.
+*
+!.gitignore

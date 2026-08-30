@@ -1,0 +1,104 @@
+{
+  "info": {
+    "name": "InviteMe RSVP API (systemUI)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Backend smoke tests for the InviteMe RSVP answer-control server (http://localhost:4100).\n\nAUTH IS COOKIE-BASED. Run request #2 (Login) first: the server sets an httpOnly 'sid' cookie and Postman reuses it automatically on every later request — there is no bearer token to copy.\n\nRun the requests top to bottom. #4 auto-captures {{eventId}} and #5 auto-captures {{intakeToken}}, so #6–#9 just work.\n\nEdit the 'adminPassword' collection variable if you change it."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4100" },
+    { "key": "adminUsername", "value": "admin" },
+    { "key": "adminPassword", "value": "vCpN2_IPpnjkU0cO" },
+    { "key": "eventId", "value": "" },
+    { "key": "intakeToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Health (no auth)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('server is up', () => pm.response.to.have.status(200));",
+          "pm.test('reports ok', () => pm.expect(pm.response.json().ok).to.eql(true));"
+        ] } }
+      ],
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/health" }
+    },
+    {
+      "name": "2. Login (admin) — sets the session cookie",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('login ok', () => pm.response.to.have.status(200));",
+          "pm.test('is admin', () => pm.expect(pm.response.json().user.role).to.eql('admin'));"
+        ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\"\n}", "options": { "raw": { "language": "json" } } },
+        "url": "{{baseUrl}}/api/auth/login"
+      }
+    },
+    {
+      "name": "3. Who am I (uses the cookie)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('authenticated', () => pm.response.to.have.status(200));"
+        ] } }
+      ],
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/me" }
+    },
+    {
+      "name": "4. List events (captures eventId)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('ok', () => pm.response.to.have.status(200));",
+          "const events = pm.response.json().events;",
+          "pm.test('has events', () => pm.expect(events.length).to.be.above(0));",
+          "if (events.length) { pm.collectionVariables.set('eventId', events[0].id); console.log('eventId =', events[0].id); }"
+        ] } }
+      ],
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/events" }
+    },
+    {
+      "name": "5. Event detail (captures intakeToken)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('ok', () => pm.response.to.have.status(200));",
+          "const token = pm.response.json().event.intakeToken;",
+          "if (token) { pm.collectionVariables.set('intakeToken', token); console.log('intakeToken captured'); }"
+        ] } }
+      ],
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/events/{{eventId}}" }
+    },
+    {
+      "name": "6. Answers — table view",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/events/{{eventId}}/answers" }
+    },
+    {
+      "name": "7. Answers — summary",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/events/{{eventId}}/answers/summary" }
+    },
+    {
+      "name": "8. Answers — export CSV",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/events/{{eventId}}/answers.csv" }
+    },
+    {
+      "name": "9. Submit an RSVP (public intake — simulates a guest)",
+      "event": [
+        { "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "pm.test('accepted (201)', () => pm.response.to.have.status(201));",
+          "pm.test('stored', () => pm.expect(pm.response.json().ok).to.eql(true));"
+        ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"full_name\": \"Postman Test Guest\",\n  \"attending\": \"yes\",\n  \"number_of_guests\": 2,\n  \"meal_choice\": \"Fish\",\n  \"note\": \"Sent from Postman\"\n}", "options": { "raw": { "language": "json" } } },
+        "url": "{{baseUrl}}/api/intake/{{intakeToken}}"
+      }
+    },
+    {
+      "name": "10. Logout",
+      "request": { "method": "POST", "url": "{{baseUrl}}/api/auth/logout" }
+    }
+  ]
+}
