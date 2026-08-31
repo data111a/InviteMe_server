@@ -47,15 +47,21 @@ function cookieOptions(expiresAt?: Date): CookieOptions {
     // ever gets injected into the dashboard, it still cannot steal the session.
     httpOnly: true,
 
-    // secure: only send over HTTPS. Off in development because localhost is
-    // plain http, on automatically in production.
+    // secure: only send over HTTPS. Off in development (localhost is plain
+    // http), on in production. Required for sameSite:'none' below.
     secure: env.isProduction,
 
-    // sameSite 'lax': the browser will not attach this cookie to requests
-    // started by another website, which blocks the classic "hostile page makes
-    // your browser perform an action as you" attack (CSRF).
-    // Works when the dashboard and API share a domain or are subdomains of one.
-    sameSite: 'lax',
+    // SameSite decides whether the cookie rides along on cross-site requests:
+    //   dev  -> 'lax'  the dashboard and API are same-origin (Vite proxy), and
+    //                  Lax also blocks the classic cross-site CSRF request.
+    //   prod -> 'none' so the cookie is sent when the dashboard and API live on
+    //                  DIFFERENT origins (e.g. a static dashboard calling this
+    //                  API on Render). 'none' requires Secure (set above).
+    //
+    // With 'none' the cookie IS sent cross-site, so CSRF protection now rests on
+    // CORS: DASHBOARD_ORIGIN MUST be your real dashboard origin, NOT '*'. State-
+    // changing calls are JSON (preflighted), so a hostile origin is turned away.
+    sameSite: env.isProduction ? 'none' : 'lax',
 
     path: '/',
     ...(expiresAt ? { expires: expiresAt } : {}),
