@@ -8,34 +8,45 @@
  */
 import type { NextFunction, Request, Response } from 'express';
 
-import { getUserById } from '../store';
+import { getUserById, isTokenRevoked } from '../store';
 import { forbidden, unauthorized } from '../lib/errors';
-import { COOKIE_NAME, verifyToken } from './jwt';
+import { readSessionToken, verifyToken } from './jwt';
 
-/** Signed in as anybody. Attaches the fresh user record to req.user. */
+/**
+ * Signed in as anybody. Attaches the fresh user record to req.user.
+ *
+ * A token is accepted only if ALL of these hold:
+ *   - its signature, algorithm, issuer, audience and expiry check out
+ *   - the account still exists (deleted = signed out, immediately)
+ *   - its session version matches the account's (password changed = signed out)
+ *   - it has not been signed out explicitly (revocation list)
+ */
 export async function requireAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
-    const token: unknown = req.cookies?.[COOKIE_NAME];
-    if (typeof token !== 'string' || token.length === 0) {
+    const token = readSessionToken(req);
+    if (!token) {
       next(unauthorized());
       return;
     }
 
-    const userId = verifyToken(token);
-    if (!userId) {
+    const claims = verifyToken(token);
+    if (!claims) {
       next(unauthorized());
       return;
     }
 
-    // Re-read every time. If the account was deleted a second ago, the session
-    // dies now rather than lingering until the token expires.
-    const user = await getUserById(userId);
-    if (!user) {
+    const [user, revoked] = await Promise.all([
+      getUserById(claims.userId),
+      isTokenRevoked(claims.jti),
+    ]);
+
+    if (!user || revoked || (user.tokenVersion ?? 0) !== claims.version) {
       next(unauthorized());
       return;
     }
 
     req.user = user;
+    req.auth = claims;
     next();
   } catch (err) {
     next(err);

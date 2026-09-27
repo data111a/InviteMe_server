@@ -48,6 +48,12 @@ export interface User {
   /** Set for clients only. Admins have null. */
   eventId: string | null;
   createdAt: string;
+  /**
+   * Session version. Every login token carries the value it was issued under;
+   * bumping it (password or username change) invalidates all of that user's
+   * sessions at once. Missing on older records = 0.
+   */
+  tokenVersion?: number;
 }
 
 export interface EventRecord {
@@ -77,11 +83,11 @@ export interface Database {
   answers: Answer[];
 }
 
-/** A user with the password hash removed - safe to send to a browser. */
-export type PublicUser = Omit<User, 'passwordHash'>;
+/** A user with the password hash and session internals removed - safe to send to a browser. */
+export type PublicUser = Omit<User, 'passwordHash' | 'tokenVersion'>;
 
 export function toPublicUser(user: User): PublicUser {
-  const { passwordHash: _omitted, ...rest } = user;
+  const { passwordHash: _hash, tokenVersion: _version, ...rest } = user;
   return rest;
 }
 
@@ -108,6 +114,7 @@ const userSchema = z.object({
   role: z.enum(ROLES),
   eventId: z.string().min(1).nullable(),
   createdAt: isoDate,
+  tokenVersion: z.number().int().nonnegative().optional(),
 });
 
 const eventSchema = z.object({

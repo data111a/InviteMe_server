@@ -38,6 +38,16 @@ export function answersCol(): Collection<Answer> {
   return requireDb().collection<Answer>('answers');
 }
 
+/** A signed-out login token. Deleted automatically once the token would have expired anyway. */
+export interface RevokedToken {
+  jti: string;
+  expiresAt: Date;
+}
+
+export function revokedTokensCol(): Collection<RevokedToken> {
+  return requireDb().collection<RevokedToken>('revoked_tokens');
+}
+
 /** The client itself, for multi-document transactions and scripts. */
 export function mongoClient(): MongoClient {
   if (!client) throw new Error('MongoDB is not connected yet - call initStore() first.');
@@ -81,6 +91,11 @@ async function ensureIndexes(): Promise<void> {
 
     answersCol().createIndex({ id: 1 }, { unique: true }),
     answersCol().createIndex({ eventId: 1, submittedAt: -1 }),
+
+    // Revocation list: one lookup per request, and a TTL index so MongoDB
+    // deletes each entry the moment its token would have expired anyway.
+    revokedTokensCol().createIndex({ jti: 1 }, { unique: true }),
+    revokedTokensCol().createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
 }
 

@@ -14,7 +14,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { badRequest, notFound } from '../lib/errors';
-import { hashPassword, MIN_PASSWORD_LENGTH } from '../auth/password';
+import { audit } from '../lib/audit';
+import { isAnswerId, isEventId } from '../lib/validate';
+import { hashPassword, passwordProblem } from '../auth/password';
 import { requireAdmin } from '../auth/middleware';
 import {
   countAnswers,
@@ -38,6 +40,18 @@ export const eventsRouter = Router();
 
 eventsRouter.use(requireAdmin);
 
+// Ids in the URL must have the exact shape we mint. Anything else is a plain
+// 404 before it gets anywhere near a database query. (These run after
+// requireAdmin, so an anonymous caller still just gets 401.)
+eventsRouter.param('id', (_req, _res, next, value: unknown) => {
+  if (isEventId(value)) next();
+  else next(notFound());
+});
+eventsRouter.param('answerId', (_req, _res, next, value: unknown) => {
+  if (isAnswerId(value)) next();
+  else next(notFound());
+});
+
 // --- shapes the browser may send --------------------------------------------
 
 const usernameSchema = z
@@ -47,21 +61,29 @@ const usernameSchema = z
   .max(60)
   .regex(/^[a-zA-Z0-9._-]+$/, 'username may only use letters, numbers, dot, dash and underscore');
 
-const passwordSchema = z
-  .string()
-  .min(MIN_PASSWORD_LENGTH, `password must be at least ${MIN_PASSWORD_LENGTH} characters`)
-  .max(200);
+// Length etc. is checked by passwordProblem(), which also needs the username.
+const passwordSchema = z.string().max(200);
 
 const eventDetailsSchema = z.object({
   name: z.string().trim().min(1, 'the event needs a name').max(120),
   type: z.enum(EVENT_TYPES),
-  eventDate: z.string().trim().min(1, 'the event needs a date'),
+  eventDate: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2})?)?$/, 'the event needs a date like 2026-09-18'),
   fieldSchema: fieldSchemaInput,
 });
 
-const createEventSchema = eventDetailsSchema.extend({
-  client: z.object({ username: usernameSchema, password: passwordSchema }),
-});
+const createEventSchema = eventDetailsSchema
+  .extend({
+    client: z.object({ username: usernameSchema, password: passwordSchema }),
+  })
+  .superRefine((v, ctx) => {
+    const problem = passwordProblem(v.client.password, v.client.username);
+    if (problem) {
+      ctx.addIssue({ code: 'custom', path: ['client', 'password'], message: `password ${problem}` });
+    }
+  });
 
 const updateEventSchema = eventDetailsSchema.partial();
 
@@ -81,7 +103,10 @@ function firstProblem(error: z.ZodError): string {
 
 function toDateIso(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw badRequest('eventDate is not a real date');
+  const year = date.getUTCFullYear();
+  if (Number.isNaN(date.getTime()) || year < 1970 || year > 2200) {
+    throw badRequest('eventDate is not a real date');
+  }
   return date.toISOString();
 }
 
@@ -158,6 +183,7 @@ eventsRouter.post('/', async (req, res, next) => {
       clientPasswordHash: await hashPassword(client.password),
     });
 
+    audit('event.created', { eventId: event.id, by: req.user?.id });
     res.status(201).json(await detailPayload(event));
   } catch (err) {
     if (err instanceof UsernameTakenError) {
@@ -214,8 +240,23 @@ eventsRouter.patch('/:id/client', async (req, res, next) => {
       return;
     }
 
+    const current = await getClientForEvent(event.id);
+    if (!current) {
+      next(notFound());
+      return;
+    }
+
     const { username, password } = parsed.data;
 
+    if (password !== undefined) {
+      const problem = passwordProblem(password, username ?? current.username);
+      if (problem) {
+        next(badRequest(`password ${problem}`));
+        return;
+      }
+    }
+
+    // Changing either credential also signs that client out everywhere.
     const client = await updateEventClient(event.id, {
       ...(username !== undefined ? { username } : {}),
       ...(password !== undefined ? { passwordHash: await hashPassword(password) } : {}),
@@ -226,6 +267,13 @@ eventsRouter.patch('/:id/client', async (req, res, next) => {
       return;
     }
 
+    audit('event.client_credentials_changed', {
+      eventId: event.id,
+      clientId: client.id,
+      usernameChanged: username !== undefined,
+      passwordChanged: password !== undefined,
+      by: req.user?.id,
+    });
     res.json({ client: { id: client.id, username: client.username } });
   } catch (err) {
     if (err instanceof UsernameTakenError) {
@@ -246,6 +294,7 @@ eventsRouter.post('/:id/rotate-token', async (req, res, next) => {
       next(notFound());
       return;
     }
+    audit('event.token_rotated', { eventId: event.id, by: req.user?.id });
     res.json({ intakeToken: event.intakeToken });
   } catch (err) {
     next(err);
@@ -304,11 +353,13 @@ eventsRouter.delete('/:id/answers/:answerId', async (req, res, next) => {
       next(notFound());
       return;
     }
-    const removed = await deleteAnswer(req.params.answerId);
+    // Scoped to THIS event: an answer id from another event is simply not found.
+    const removed = await deleteAnswer(event.id, req.params.answerId);
     if (!removed) {
       next(notFound());
       return;
     }
+    audit('answer.deleted', { eventId: event.id, answerId: req.params.answerId, by: req.user?.id });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -324,6 +375,7 @@ eventsRouter.delete('/:id', async (req, res, next) => {
       next(notFound());
       return;
     }
+    audit('event.deleted', { eventId: req.params.id, by: req.user?.id });
     res.json({ ok: true });
   } catch (err) {
     next(err);

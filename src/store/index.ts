@@ -18,6 +18,7 @@ import {
   eventsCol,
   isDuplicateKeyError,
   mongoClient,
+  revokedTokensCol,
   usersCol,
 } from './mongo';
 import type { Answer, EventRecord, EventType, FieldDef, Role, User } from './types';
@@ -95,9 +96,10 @@ export async function updateUser(
   if (Object.keys(set).length === 0) return getUserById(id);
 
   try {
+    // Changed credentials end every existing session of this user.
     return await usersCol().findOneAndUpdate(
       { id },
-      { $set: set },
+      { $set: set, $inc: { tokenVersion: 1 } },
       { returnDocument: 'after', projection: NO_ID },
     );
   } catch (err) {
@@ -186,9 +188,10 @@ export async function updateEventClient(
   if (Object.keys(set).length === 0) return getClientForEvent(eventId);
 
   try {
+    // Changed credentials end every existing session of this client.
     return await usersCol().findOneAndUpdate(
       { role: 'client', eventId },
-      { $set: set },
+      { $set: set, $inc: { tokenVersion: 1 } },
       { returnDocument: 'after', projection: NO_ID },
     );
   } catch (err) {
@@ -274,7 +277,23 @@ export async function countAnswers(eventId: string): Promise<number> {
   return answersCol().countDocuments({ eventId });
 }
 
-export async function deleteAnswer(id: string): Promise<boolean> {
-  const res = await answersCol().deleteOne({ id });
+/** Delete one answer - only if it really belongs to the given event. */
+export async function deleteAnswer(eventId: string, id: string): Promise<boolean> {
+  const res = await answersCol().deleteOne({ id, eventId });
   return res.deletedCount > 0;
+}
+
+// --- sessions ---------------------------------------------------------------
+
+/** Mark one login token as signed out until it would have expired anyway. */
+export async function revokeToken(jti: string, expiresAt: Date): Promise<void> {
+  await revokedTokensCol().updateOne(
+    { jti },
+    { $setOnInsert: { jti, expiresAt } },
+    { upsert: true },
+  );
+}
+
+export async function isTokenRevoked(jti: string): Promise<boolean> {
+  return (await revokedTokensCol().countDocuments({ jti }, { limit: 1 })) > 0;
 }

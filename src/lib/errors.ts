@@ -8,6 +8,8 @@
  */
 import type { NextFunction, Request, Response } from 'express';
 
+import { redactSecrets } from './redact';
+
 /** An error we deliberately want to show the user, e.g. "Invalid credentials". */
 export class AppError extends Error {
   readonly status: number;
@@ -31,7 +33,13 @@ export function notFoundHandler(_req: Request, res: Response) {
 }
 
 /** The last stop. Every thrown error in the app ends up here. */
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: unknown, _req: Request, res: Response, next: NextFunction) {
+  // Too late to send a clean reply; let Express close the connection.
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
   if (err instanceof AppError) {
     res.status(err.status).json({ error: err.message });
     return;
@@ -45,17 +53,24 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       res.status(413).json({ error: 'Request too large' });
       return;
     }
-    if (type === 'entity.parse.failed') {
+    if (type === 'entity.parse.failed' || type === 'entity.verify.failed') {
       res.status(400).json({ error: 'Invalid JSON' });
       return;
     }
-    if (type === 'charset.unsupported' || type === 'encoding.unsupported') {
-      res.status(400).json({ error: 'Unsupported encoding' });
+    if (
+      type === 'charset.unsupported' ||
+      type === 'encoding.unsupported' ||
+      type === 'request.size.invalid' ||
+      type === 'request.aborted'
+    ) {
+      res.status(400).json({ error: 'Invalid request' });
       return;
     }
   }
 
-  // Anything unexpected: log it for us, say nothing useful to them.
-  console.error('[unhandled]', err);
+  // Anything unexpected: log it for us (credentials stripped), say nothing
+  // useful to them - no stack trace, no driver message, no file paths.
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  console.error('[unhandled]', redactSecrets(detail));
   res.status(500).json({ error: 'Something went wrong' });
 }

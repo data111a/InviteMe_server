@@ -41,9 +41,18 @@ function cleanString(input: string): string {
   return input.replace(CONTROL_CHARS, '').trim().slice(0, INTAKE_LIMITS.maxValueLength);
 }
 
-/** A key we are willing to store under. Bounded, cleaned, never dangerous. */
+/**
+ * A key we are willing to store under. Bounded, cleaned, never dangerous.
+ *
+ * MongoDB reads a leading "$" as an operator ("$where", "$ne") and a "." as a
+ * path into a nested document. Guest-supplied keys are stored as data, so both
+ * are neutralised: "$where" -> "where", "a.b" -> "a_b".
+ */
 function cleanKey(key: string): string | null {
-  const cleaned = cleanString(key).slice(0, INTAKE_LIMITS.maxKeyLength);
+  const cleaned = cleanString(key)
+    .slice(0, INTAKE_LIMITS.maxKeyLength)
+    .replace(/^\$+/, '')
+    .replace(/\./g, '_');
   if (cleaned === '') return null;
   if (FORBIDDEN_KEYS.has(cleaned)) return null;
   return cleaned;
@@ -65,9 +74,19 @@ function cleanValue(value: unknown): unknown {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
 
   if (Array.isArray(value)) {
-    return value
-      .slice(0, INTAKE_LIMITS.maxArrayItems)
-      .map((item) => (typeof item === 'string' ? cleanString(item) : cleanValue(item)));
+    // One level only. Anything nested inside becomes text, so an attacker
+    // cannot send [[[[…]]]] deep enough to break the database insert.
+    return value.slice(0, INTAKE_LIMITS.maxArrayItems).map((item) => {
+      if (typeof item === 'string') return cleanString(item);
+      if (item !== null && typeof item === 'object') {
+        try {
+          return cleanString(JSON.stringify(item));
+        } catch {
+          return null;
+        }
+      }
+      return cleanValue(item);
+    });
   }
 
   if (typeof value === 'object') {

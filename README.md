@@ -24,11 +24,18 @@ npm run db:show            # confirm what's in the database (no secrets shown)
 | `MONGODB_URI` | Atlas connection string — **secret** (contains the DB password) |
 | `MONGODB_DB` | database name (default `inviteme`) |
 | `JWT_SECRET` | long random string used to sign login cookies (32+ chars) |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | the single admin login |
-| `DASHBOARD_ORIGIN` | the dashboard's URL (CORS + cookie) |
+| `JWT_EXPIRES_IN` | session length, default `12h` (5m–30d) |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | **seed only** — the running server doesn't need them |
+| `DASHBOARD_ORIGIN` | the dashboard URL(s), comma-separated. `*` is refused in production |
 | `INTAKE_ALLOWED_ORIGINS` | invitation-site origin(s) allowed to POST RSVPs (comma-separated, no trailing slash) |
-| `NODE_ENV` | `development` or `production` (prod turns on Secure cookies + HSTS) |
+| `NODE_ENV` | `development` or `production` (prod: `__Host-` Secure cookies, HSTS, config guards) |
 | `CLIENT_DIST` | optional: path to the client's built `dist/` for single-origin hosting |
+| `COOKIE_SAMESITE` | optional: `lax` once dashboard + API share a site (default `none` in prod) |
+| `TURNSTILE_SECRET` | optional: Cloudflare Turnstile secret — makes RSVPs require a captcha |
+| `MAX_ANSWERS_PER_EVENT` | optional: storage cap per event (default 2000) |
+| `TRUST_PROXY` | optional: proxy hops in front (default 1 on Render / in production) |
+
+See **[SECURITY.md](SECURITY.md)** for everything the server enforces.
 
 ## Run
 
